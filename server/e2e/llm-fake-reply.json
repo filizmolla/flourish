@@ -1,0 +1,57 @@
+{
+  "1": {
+    "recipes": [
+      {
+        "title": "Lemon Olive Oil Cake",
+        "source": "@lemonkitchen",
+        "ingredients": [
+          "200 g flour",
+          "150 g sugar",
+          "3 eggs",
+          "120 ml olive oil",
+          "1 lemon, zest and juice"
+        ],
+        "steps": [
+          "Heat the oven to 180°C.",
+          "Whisk the eggs and sugar, then add the oil and lemon.",
+          "Fold in the flour and bake for 35 minutes."
+        ]
+      }
+    ]
+  },
+  "2": {
+    "recipes": [
+      {
+        "title": "Tomato Soup",
+        "source": "",
+        "ingredients": [
+          "1 kg tomatoes",
+          "1 onion",
+          "2 tbsp olive oil",
+          "500 ml stock"
+        ],
+        "steps": [
+          "Soften the onion in the oil.",
+          "Add the tomatoes and stock and simmer for 20 minutes.",
+          "Blend until smooth."
+        ]
+      },
+      {
+        "title": "Garlic Bread",
+        "source": "",
+        "ingredients": [
+          "1 baguette",
+          "3 cloves garlic",
+          "50 g butter"
+        ],
+        "steps": [
+          "Mix the butter and crushed garlic.",
+          "Spread on the sliced bread and bake for 10 minutes."
+        ]
+      }
+    ]
+  },
+  "3": {
+    "recipes": []
+  }
+}

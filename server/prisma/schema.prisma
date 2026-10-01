@@ -1,0 +1,321 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id            String         @id
+  name          String
+  email         String
+  emailVerified Boolean        @default(false)
+  image         String?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  sessions      Session[]
+  accounts      Account[]
+  recipes       Recipe[]
+  recipeImports RecipeImport[]
+  meals         Meal[]
+
+  @@unique([email])
+  @@map("user")
+}
+
+model Session {
+  id        String   @id
+  expiresAt DateTime
+  token     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([token])
+  @@index([userId])
+  @@map("session")
+}
+
+model Account {
+  id                    String    @id
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([userId])
+  @@map("account")
+}
+
+model Recipe {
+  id                  String             @id @default(cuid())
+  title               String
+  // Being replaced by `lines` (Phase 5): kept in sync with it until the
+  // follow-up migration drops this column.
+  ingredients         String[]
+  lines               RecipeIngredient[]
+  instructions        String
+  // Long-form intro shown before the recipe itself, food-blog style.
+  story               String?
+  imageUrl            String?
+  // Who the recipe is from, as the user writes it: "@account", "Mom", a
+  // cookbook. Free text, trimmed, max 100; null when unknown.
+  source              String?
+  prepMinutes         Int?
+  cookMinutes         Int?
+  servings            Int?
+  userId              String
+  user                User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  attempts            Attempt[]          @relation("RecipeAttempts")
+  // "Save as new recipe": the recipe and attempt this one was forked from.
+  // Set by the server from the attempt; both become null when the original
+  // is deleted (its attempts go with it), and the fork keeps its own history.
+  forkedFromRecipeId  String?
+  forkedFromRecipe    Recipe?            @relation("RecipeFork", fields: [forkedFromRecipeId], references: [id], onDelete: SetNull)
+  forks               Recipe[]           @relation("RecipeFork")
+  // Unique: one fork per attempt.
+  forkedFromAttemptId String?            @unique
+  forkedFromAttempt   Attempt?           @relation("AttemptFork", fields: [forkedFromAttemptId], references: [id], onDelete: SetNull)
+  // Photo import: the import and which of its parsed recipes (0-based) this
+  // one was saved from. Both or neither; the unique pair stops the same parsed
+  // recipe from being saved twice (and its index also covers importId lookups).
+  importId            String?
+  import              RecipeImport?      @relation(fields: [importId], references: [id], onDelete: SetNull)
+  importIndex         Int?
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+
+  @@unique([importId, importIndex])
+  @@index([userId])
+  @@index([forkedFromRecipeId])
+  @@map("recipe")
+}
+
+// One row per time a recipe is cooked, created on Finish in cooking mode.
+// No userId: ownership comes from the recipe.
+model Attempt {
+  id               String     @id @default(cuid())
+  recipeId         String
+  recipe           Recipe     @relation("RecipeAttempts", fields: [recipeId], references: [id], onDelete: Cascade)
+  // Active cooking time (breaks excluded); editable on Finish.
+  durationMinutes  Int?
+  // When Finish was tapped.
+  madeAt           DateTime   @default(now())
+  // 1–5, checked by zod.
+  rating           Int?
+  // "How did you feel after?" (Phase 6), set with the rating.
+  fullness         Fullness?
+  // "Was it enjoyable to make?": the effort, apart from the taste (stars).
+  enjoyment        Enjoyment?
+  // A photo of what came out, taken at Finish. Relative to STORAGE_DIR
+  // (attempts/{userId}/{id}.jpg), never a public URL.
+  photoPath        String?
+  notes            String?
+  // null = same as today's recipe; else full `{ text, ingredientId? }[]` snapshot.
+  // A recipe edit first writes the old lines into its null snapshots.
+  ingredients      Json?
+  // null = same as today's recipe; else full override, one step per line.
+  instructions     String?
+  // Lines were changed while cooking (the "changed" badge). Set once at Finish;
+  // snapshots filled in by a later recipe edit never change it.
+  tweaked          Boolean    @default(false)
+  // Set by "Cook this version again"; must belong to the same recipe.
+  basedOnAttemptId String?
+  basedOnAttempt   Attempt?   @relation("AttemptBasedOn", fields: [basedOnAttemptId], references: [id], onDelete: SetNull)
+  derivedAttempts  Attempt[]  @relation("AttemptBasedOn")
+  // The recipe saved from this attempt, if any.
+  fork             Recipe?    @relation("AttemptFork")
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+
+  @@index([recipeId, madeAt])
+  @@map("attempt")
+}
+
+// One row per "Get recipe": what the model read from the photos, how long it
+// took, and what the user did with it. Not a draft: recipes are only created
+// when the user saves. Kept after the queue ends (closed, not deleted).
+model RecipeImport {
+  id            String        @id @default(cuid())
+  userId        String
+  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status        ImportStatus  @default(PENDING)
+  photoCount    Int
+  // LLM_MODEL used for this import.
+  model         String
+  durationMs    Int?
+  error         String?
+  // { recipes: [{ title, ingredients[], steps[] }] } as returned, after validation.
+  result        Json?
+  // Parsed recipes saved or skipped, in order. Only goes up, never past the parsed count.
+  reviewedCount Int           @default(0)
+  // Set when the queue ends: last recipe handled, Stop importing, or no recipe / failed.
+  closedAt      DateTime?
+  recipes       Recipe[]
+  photos        ImportPhoto[]
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  @@index([userId, createdAt])
+  @@map("recipe_import")
+}
+
+enum ImportStatus {
+  PENDING
+  DONE
+  NO_RECIPE
+  FAILED
+}
+
+// The photos of an import. The JPEG lives on disk at
+// STORAGE_DIR/imports/{userId}/{importId}/{position}.jpg; the row holds only
+// its path and metadata. Written before the model is called.
+model ImportPhoto {
+  id        String       @id @default(cuid())
+  importId  String
+  import    RecipeImport @relation(fields: [importId], references: [id], onDelete: Cascade)
+  // 0-based, the order sent to the model.
+  position  Int
+  // Relative to STORAGE_DIR, never a public URL.
+  path      String
+  mimeType  String
+  bytes     Int
+  width     Int
+  height    Int
+  createdAt DateTime     @default(now())
+
+  @@unique([importId, position])
+  @@map("import_photo")
+}
+
+// Ingredient catalog. Wording: neutral nutrition terms only.
+enum Nutrient {
+  PROTEIN
+  FIBER
+  HEALTHY_FAT
+}
+
+// What a food mostly is: one of the nutrients, or CARB when none fits.
+enum FoodGroup {
+  PROTEIN
+  FIBER
+  HEALTHY_FAT
+  CARB
+}
+
+// Global and read-only for users: seeded from USDA FoodData Central.
+model Ingredient {
+  id             String             @id @default(cuid())
+  name           String
+  // Lower-case, trimmed, singular: what the line matcher compares against.
+  normalizedName String             @unique
+  aliases        String[]
+  // null = a seasoning or anything that doesn't count toward a balanced plate.
+  mainGroup      FoodGroup?
+  nutrients      Nutrient[]
+  description    String?
+  // The USDA FoodData Central food it was taken from.
+  fdcId          Int?               @unique
+  lines          RecipeIngredient[]
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+
+  @@map("ingredient")
+}
+
+// One ingredient line of a recipe, as written ("2 cups flour"), in order.
+// Linked to a catalog entry when the matcher (or the owner) finds one;
+// `# ` section headings are lines too but are never linked.
+model RecipeIngredient {
+  id             String      @id @default(cuid())
+  recipeId       String
+  recipe         Recipe      @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+  // 0-based order within the recipe.
+  position       Int
+  text           String
+  ingredientId   String?
+  ingredient     Ingredient? @relation(fields: [ingredientId], references: [id], onDelete: SetNull)
+  // The owner linked or unlinked this line by hand, so the matcher leaves it
+  // alone (an unlink is ingredientId null, same as "no match yet"). Editing
+  // the line's text starts it over.
+  linkSetByOwner Boolean     @default(false)
+
+  @@unique([recipeId, position])
+  @@index([ingredientId])
+  @@map("recipe_ingredient")
+}
+
+model Verification {
+  id         String   @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
+  @@map("verification")
+}
+
+// Phase 6: a meal or snack eaten anywhere (restaurant, trip, leftovers), with
+// an optional photo, text and "How did you feel after?". No recipe needed,
+// nothing counted.
+enum MealKind {
+  MEAL
+  SNACK
+}
+
+// "Was it enjoyable to make?" None is framed as right or wrong.
+enum Enjoyment {
+  LOVED
+  FINE
+  NOT_WORTH_IT
+}
+
+// None of these is the "right" answer; the app shows them side by side.
+enum Fullness {
+  STILL_HUNGRY
+  SATISFIED
+  VERY_FULL
+}
+
+model Meal {
+  id        String     @id @default(cuid())
+  userId    String
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kind      MealKind   @default(MEAL)
+  eatenAt   DateTime   @default(now())
+  // What was in it, as typed: "leftover pasta, spinach".
+  text      String?
+  // Union of the catalog matches over the pieces of `text`, set when the text
+  // is saved. Stored, not joined (no meal_item table); a catalog reseed
+  // doesn't update old meals.
+  nutrients Nutrient[]
+  // Relative to STORAGE_DIR (meals/{userId}/{id}.jpg), never a public URL.
+  photoPath String?
+  fullness  Fullness?
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  @@index([userId, eatenAt])
+  @@map("meal")
+}

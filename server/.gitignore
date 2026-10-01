@@ -1,0 +1,12 @@
+node_modules
+dist
+.env
+.env.test
+.env.demo
+
+/src/generated/prisma
+
+# Import photos (STORAGE_DIR in .env, .env.test, .env.demo)
+/storage/
+/storage-test/
+/storage-demo/

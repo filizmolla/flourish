@@ -1,0 +1,4 @@
+node_modules/
+.env
+
+# Private photo-import test set (third-party images), never committed
